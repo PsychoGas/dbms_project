@@ -371,44 +371,6 @@ export async function updateCourse(id: number, data: {
   }
 }
 
-// Enrollment Functions
-export async function enrollStudent(data: {
-  studentId: number;
-  courseId: number;
-  semester: typeof semesterEnum.enumValues[number];
-  year: number;
-}) {
-  try {
-    // Check if student is already enrolled in this course for this semester and year
-    const existingEnrollment = await db.query.enrollments.findFirst({
-      where: and(
-        eq(enrollments.studentId, data.studentId),
-        eq(enrollments.courseId, data.courseId),
-        eq(enrollments.semester, data.semester),
-        eq(enrollments.year, data.year)
-      ),
-    });
-
-    if (existingEnrollment) {
-      throw new Error('Student is already enrolled in this course for this semester');
-    }
-
-    const enrollmentData: NewEnrollment = {
-      studentId: data.studentId,
-      courseId: data.courseId,
-      semester: data.semester,
-      year: data.year,
-    };
-
-    const result = await db.insert(enrollments).values(enrollmentData).returning();
-    revalidatePath(`/students/${data.studentId}`);
-    revalidatePath(`/courses/${data.courseId}`);
-    return result[0];
-  } catch (error) {
-    console.error('Error enrolling student:', error);
-    throw new Error('Failed to enroll student');
-  }
-}
 
 export async function updateGrade(enrollmentId: number, grade: typeof gradeEnum.enumValues[number]) {
   try {
@@ -606,3 +568,130 @@ export async function getDashboardStats() {
     throw new Error('Failed to fetch dashboard statistics');
   }
 }
+export async function getFacultyById(id: number) {
+    try {
+      return await db.query.faculties.findFirst({
+        where: eq(faculties.id, id),
+        with: {
+          department: true,
+          courses: true,
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching faculty:', error);
+      throw new Error('Failed to fetch faculty');
+    }
+  }
+
+  export async function getCourseById(id: number) {
+    try {
+      return await db.query.courses.findFirst({
+        where: eq(courses.id, id),
+        with: {
+          department: true,
+          faculty: true,
+          enrollments: {
+            with: {
+              student: true,
+            },
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching course:', error);
+      throw new Error('Failed to fetch course');
+    }
+  }
+// ...existing code...
+
+// Helper function for enrolling students directly from course creation
+export async function enrollStudent(data: {
+  studentId: number;
+  courseId: number;
+  semester: typeof semesterEnum.enumValues[number];
+  year: number;
+}) {
+  try {
+    // Check if student is already enrolled in this course for this semester and year
+    const existingEnrollment = await db.query.enrollments.findFirst({
+      where: and(
+        eq(enrollments.studentId, data.studentId),
+        eq(enrollments.courseId, data.courseId),
+        eq(enrollments.semester, data.semester),
+        eq(enrollments.year, data.year)
+      ),
+    });
+
+    if (existingEnrollment) {
+      // If already enrolled, just return the existing enrollment
+      return existingEnrollment;
+    }
+
+    const enrollmentData: NewEnrollment = {
+      studentId: data.studentId,
+      courseId: data.courseId,
+      semester: data.semester,
+      year: data.year,
+    };
+
+    const result = await db.insert(enrollments).values(enrollmentData).returning();
+    revalidatePath(`/students/${data.studentId}`);
+    revalidatePath(`/courses/${data.courseId}`);
+    return result[0];
+  } catch (error) {
+    console.error('Error enrolling student:', error);
+    throw new Error('Failed to enroll student');
+  }
+}
+
+// Add this function to lib/actions.ts
+export async function assignFacultyToDepartment(facultyId: number, departmentId: number) {
+    try {
+      const result = await db.update(faculties)
+        .set({
+          departmentId: departmentId,
+          updatedAt: new Date()
+        })
+        .where(eq(faculties.id, facultyId))
+        .returning();
+
+      revalidatePath(`/departments/${departmentId}`);
+      revalidatePath(`/faculties/${facultyId}`);
+      return result[0];
+    } catch (error) {
+      console.error('Error assigning faculty to department:', error);
+      throw new Error('Failed to assign faculty to department');
+    }
+  }
+
+  // Update getDepartments to include faculties and courses
+  export async function getDepartmentss() {
+    try {
+      return await db.query.departments.findMany({
+        with: {
+          faculties: true,
+          courses: true,
+        },
+        orderBy: (departments, { asc }) => [asc(departments.name)],
+      });
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+      throw new Error('Failed to fetch departments');
+    }
+  }
+
+  // Add this function if it doesn't exist
+  export async function getDepartmentById(id: number) {
+    try {
+      return await db.query.departments.findFirst({
+        where: eq(departments.id, id),
+        with: {
+          faculties: true,
+          courses: true,
+        },
+      });
+    } catch (error) {
+      console.error('Error fetching department:', error);
+      throw new Error('Failed to fetch department');
+    }
+  }
