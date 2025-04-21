@@ -54,6 +54,7 @@ export default async function DashboardPage() {
       <div className="border rounded-lg p-4">
         <h2 className="text-xl font-semibold mb-4">Welcome to School Management System</h2>
         <p className="text-muted-foreground">
+          Built by Akash Manoj - 23BRS1342 and Rishabh - 23BRS1368
           This is a comprehensive school management system built with Next.js, Drizzle ORM, and Supabase.
           Use the sidebar to navigate to different sections of the application.
         </p>

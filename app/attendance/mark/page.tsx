@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { addMarks, getEnrollments } from '@/lib/actions';
+import { useRouter } from 'next/navigation';
+import { markAttendance, getEnrollments } from '@/lib/actions';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -38,23 +39,15 @@ const formSchema = z.object({
   enrollmentId: z.string({
     required_error: "Please select a student and course",
   }),
-  examType: z.string().min(2, {
-    message: 'Exam type must be at least 2 characters.',
+  date: z.string().refine((val) => !isNaN(Date.parse(val)), {
+    message: 'Please enter a valid date.',
   }),
-  score: z.coerce.number().min(0, {
-    message: 'Score must be at least 0.',
-  }),
-  maxScore: z.coerce.number().min(1, {
-    message: 'Maximum score must be at least 1.',
-  }),
+  isPresent: z.boolean().default(false),
   remarks: z.string().optional(),
 });
 
-export default function AddMarksPage() {
+export default function MarkAttendancePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const enrollmentIdParam = searchParams.get('enrollmentId');
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [enrollments, setEnrollments] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,10 +70,9 @@ export default function AddMarksPage() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      enrollmentId: enrollmentIdParam || '',
-      examType: '',
-      score: 0,
-      maxScore: 100,
+      enrollmentId: '',
+      date: new Date().toISOString().split('T')[0],
+      isPresent: true,
       remarks: '',
     },
   });
@@ -88,17 +80,16 @@ export default function AddMarksPage() {
   async function onSubmit(values: any) {
     setIsSubmitting(true);
     try {
-      await addMarks({
+      await markAttendance({
         enrollmentId: parseInt(values.enrollmentId),
-        examType: values.examType,
-        score: values.score,
-        maxScore: values.maxScore,
+        date: values.date,
+        isPresent: values.isPresent,
         remarks: values.remarks,
       });
-      router.push('/marks');
+      router.push('/attendance');
       router.refresh();
     } catch (error) {
-      console.error('Error adding marks:', error);
+      console.error('Error marking attendance:', error);
       setIsSubmitting(false);
     }
   }
@@ -114,19 +105,19 @@ export default function AddMarksPage() {
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center mb-6">
-        <Link href="/marks">
+        <Link href="/attendance">
           <Button variant="outline" size="icon" className="mr-2">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">Add Student Marks</h1>
+        <h1 className="text-2xl font-bold">Mark Attendance</h1>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Record Exam Marks</CardTitle>
+          <CardTitle>Record Student Attendance</CardTitle>
           <CardDescription>
-            Enter the exam details and scores for a student.
+            Select a student, course, and date to record attendance.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -165,47 +156,37 @@ export default function AddMarksPage() {
 
               <FormField
                 control={form.control}
-                name="examType"
+                name="date"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Exam Type</FormLabel>
+                    <FormLabel>Date</FormLabel>
                     <FormControl>
-                      <Input placeholder="Midterm, Final, Assignment, etc." {...field} />
+                      <Input type="date" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
 
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="score"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Score</FormLabel>
-                      <FormControl>
-                        <Input type="number" min="0" step="0.01" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="maxScore"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Maximum Score</FormLabel>
-                      <FormControl>
-                        <Input type="number" min="1" step="0.01" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <FormField
+                control={form.control}
+                name="isPresent"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                    <FormControl>
+                      <Checkbox
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <div className="space-y-1 leading-none">
+                      <FormLabel>
+                        Present
+                      </FormLabel>
+                    </div>
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}
@@ -215,7 +196,7 @@ export default function AddMarksPage() {
                     <FormLabel>Remarks</FormLabel>
                     <FormControl>
                       <Textarea
-                        placeholder="Any additional comments about the student's performance"
+                        placeholder="Any notes about the student's attendance"
                         {...field}
                       />
                     </FormControl>
@@ -234,7 +215,7 @@ export default function AddMarksPage() {
                   Cancel
                 </Button>
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? 'Saving...' : 'Save Marks'}
+                  {isSubmitting ? 'Saving...' : 'Save Attendance'}
                 </Button>
               </div>
             </form>

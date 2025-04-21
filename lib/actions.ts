@@ -5,7 +5,7 @@ import {
   students, faculties, departments, courses, enrollments, marks, attendance,
   semesterEnum, gradeEnum
 } from './schema';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 
 // Define proper types for database operations
@@ -404,150 +404,6 @@ export async function updateGrade(enrollmentId: number, grade: typeof gradeEnum.
   }
 }
 
-// Marks Functions
-export async function addMarks(data: {
-  enrollmentId: number;
-  examType: string;
-  score: number;
-  maxScore: number;
-  remarks?: string;
-}) {
-  try {
-    const marksData: NewMark = {
-      enrollmentId: data.enrollmentId,
-      examType: data.examType,
-      score: data.score.toString(), // Convert to string for numeric type
-      maxScore: data.maxScore.toString(), // Convert to string for numeric type
-      remarks: data.remarks,
-    };
-
-    const result = await db.insert(marks).values(marksData).returning();
-
-    const enrollment = await db.query.enrollments.findFirst({
-      where: eq(enrollments.id, data.enrollmentId),
-      columns: {
-        studentId: true,
-        courseId: true,
-      },
-    });
-
-    if (enrollment) {
-      revalidatePath(`/students/${enrollment.studentId}`);
-      revalidatePath(`/courses/${enrollment.courseId}`);
-    }
-
-    return result[0];
-  } catch (error) {
-    console.error('Error adding marks:', error);
-    throw new Error('Failed to add marks');
-  }
-}
-
-export async function updateMarks(id: number, data: {
-  examType?: string;
-  score?: number;
-  maxScore?: number;
-  remarks?: string;
-}) {
-  try {
-    const updateData: Partial<NewMark> = {};
-
-    if (data.examType !== undefined) updateData.examType = data.examType;
-    if (data.score !== undefined) updateData.score = data.score.toString();
-    if (data.maxScore !== undefined) updateData.maxScore = data.maxScore.toString();
-    if (data.remarks !== undefined) updateData.remarks = data.remarks;
-
-    updateData.updatedAt = new Date();
-
-    const result = await db.update(marks)
-      .set(updateData)
-      .where(eq(marks.id, id))
-      .returning();
-
-    const mark = await db.query.marks.findFirst({
-      where: eq(marks.id, id),
-      with: {
-        enrollment: {
-          columns: {
-            studentId: true,
-            courseId: true,
-          },
-        },
-      },
-    });
-
-    if (mark?.enrollment) {
-      revalidatePath(`/students/${mark.enrollment.studentId}`);
-      revalidatePath(`/courses/${mark.enrollment.courseId}`);
-    }
-
-    return result[0];
-  } catch (error) {
-    console.error('Error updating marks:', error);
-    throw new Error('Failed to update marks');
-  }
-}
-
-// Attendance Functions
-export async function markAttendance(data: {
-  enrollmentId: number;
-  date: Date;
-  isPresent: boolean;
-  remarks?: string;
-}) {
-  try {
-    // Check if attendance already exists for this date and enrollment
-    const existingAttendance = await db.query.attendance.findFirst({
-      where: and(
-        eq(attendance.enrollmentId, data.enrollmentId),
-        eq(attendance.date, formatDate(data.date))
-      ),
-    });
-
-    let result;
-    if (existingAttendance) {
-      // Update existing attendance
-      const updateData: Partial<NewAttendance> = {
-        isPresent: data.isPresent,
-        remarks: data.remarks,
-        updatedAt: new Date(),
-      };
-
-      result = await db.update(attendance)
-        .set(updateData)
-        .where(eq(attendance.id, existingAttendance.id))
-        .returning();
-    } else {
-      // Create new attendance record
-      const attendanceData: NewAttendance = {
-        enrollmentId: data.enrollmentId,
-        date: formatDate(data.date),
-        isPresent: data.isPresent,
-        remarks: data.remarks,
-      };
-
-      result = await db.insert(attendance).values(attendanceData).returning();
-    }
-
-    const enrollment = await db.query.enrollments.findFirst({
-      where: eq(enrollments.id, data.enrollmentId),
-      columns: {
-        studentId: true,
-        courseId: true,
-      },
-    });
-
-    if (enrollment) {
-      revalidatePath(`/students/${enrollment.studentId}`);
-      revalidatePath(`/courses/${enrollment.courseId}`);
-    }
-
-    return result[0];
-  } catch (error) {
-    console.error('Error marking attendance:', error);
-    throw new Error('Failed to mark attendance');
-  }
-}
 
 // Dashboard Statistics
 export async function getDashboardStats() {
@@ -695,3 +551,461 @@ export async function assignFacultyToDepartment(facultyId: number, departmentId:
       throw new Error('Failed to fetch department');
     }
   }
+
+  // Attendance Functions
+export async function getAttendance() {
+  try {
+    return await db.query.attendance.findMany({
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+            course: true,
+          },
+        },
+      },
+      orderBy: (attendance, { desc }) => [desc(attendance.date)],
+    });
+  } catch (error) {
+    console.error('Error fetching attendance:', error);
+    throw new Error('Failed to fetch attendance');
+  }
+}
+
+export async function getAttendanceById(id: number) {
+  try {
+    return await db.query.attendance.findFirst({
+      where: eq(attendance.id, id),
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+            course: true,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching attendance record:', error);
+    throw new Error('Failed to fetch attendance record');
+  }
+}
+
+export async function getAttendanceByStudentId(studentId: number) {
+  try {
+    const studentEnrollments = await db.query.enrollments.findMany({
+      where: eq(enrollments.studentId, studentId),
+      with: {
+        course: true,
+      },
+    });
+
+    const enrollmentIds = studentEnrollments.map(enrollment => enrollment.id);
+
+    if (enrollmentIds.length === 0) {
+      return [];
+    }
+
+    return await db.query.attendance.findMany({
+      where: inArray(attendance.enrollmentId, enrollmentIds),
+      with: {
+        enrollment: {
+          with: {
+            course: true,
+          },
+        },
+      },
+      orderBy: (attendance, { desc }) => [desc(attendance.date)],
+    });
+  } catch (error) {
+    console.error('Error fetching student attendance:', error);
+    throw new Error('Failed to fetch student attendance');
+  }
+}
+
+export async function getAttendanceByCourseId(courseId: number) {
+  try {
+    const courseEnrollments = await db.query.enrollments.findMany({
+      where: eq(enrollments.courseId, courseId),
+      with: {
+        student: true,
+      },
+    });
+
+    const enrollmentIds = courseEnrollments.map(enrollment => enrollment.id);
+
+    if (enrollmentIds.length === 0) {
+      return [];
+    }
+
+    return await db.query.attendance.findMany({
+      where: inArray(attendance.enrollmentId, enrollmentIds),
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+          },
+        },
+      },
+      orderBy: (attendance, { desc }) => [desc(attendance.date)],
+    });
+  } catch (error) {
+    console.error('Error fetching course attendance:', error);
+    throw new Error('Failed to fetch course attendance');
+  }
+}
+
+export async function markAttendance(data: any) {
+  try {
+    // Check if attendance already exists for this date and enrollment
+    const existingAttendance = await db.query.attendance.findFirst({
+      where: and(
+        eq(attendance.enrollmentId, data.enrollmentId),
+        eq(attendance.date, data.date instanceof Date ? formatDate(data.date) : data.date)
+      ),
+    });
+
+    let result;
+    if (existingAttendance) {
+      // Update existing attendance
+      const updateData: any = {
+        isPresent: data.isPresent,
+        remarks: data.remarks,
+        updatedAt: new Date().toISOString(),
+      };
+
+      result = await db.update(attendance)
+        .set(updateData)
+        .where(eq(attendance.id, existingAttendance.id))
+        .returning();
+    } else {
+      // Create new attendance record
+      const attendanceData: any = {
+        enrollmentId: data.enrollmentId,
+        date: data.date instanceof Date ? formatDate(data.date) : data.date,
+        isPresent: data.isPresent,
+        remarks: data.remarks,
+      };
+
+      result = await db.insert(attendance).values(attendanceData).returning();
+    }
+
+    const enrollment = await db.query.enrollments.findFirst({
+      where: eq(enrollments.id, data.enrollmentId),
+      columns: {
+        studentId: true,
+        courseId: true,
+      },
+    });
+
+    if (enrollment) {
+      revalidatePath(`/students/${enrollment.studentId}`);
+      revalidatePath(`/courses/${enrollment.courseId}`);
+      revalidatePath('/attendance');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error marking attendance:', error);
+    throw new Error('Failed to mark attendance');
+  }
+}
+
+export async function updateAttendance(id: number, data: any) {
+  try {
+    const updateData: any = {
+      isPresent: data.isPresent,
+      remarks: data.remarks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (data.date) {
+      updateData.date = data.date instanceof Date ? formatDate(data.date) : data.date;
+    }
+
+    const result = await db.update(attendance)
+      .set(updateData)
+      .where(eq(attendance.id, id))
+      .returning();
+
+    const attendanceRecord = await db.query.attendance.findFirst({
+      where: eq(attendance.id, id),
+      with: {
+        enrollment: {
+          columns: {
+            studentId: true,
+            courseId: true,
+          },
+        },
+      },
+    });
+
+    if (attendanceRecord?.enrollment) {
+      revalidatePath(`/students/${attendanceRecord.enrollment.studentId}`);
+      revalidatePath(`/courses/${attendanceRecord.enrollment.courseId}`);
+      revalidatePath('/attendance');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error updating attendance:', error);
+    throw new Error('Failed to update attendance');
+  }
+}
+
+export async function deleteAttendance(id: number) {
+  try {
+    const attendanceRecord = await db.query.attendance.findFirst({
+      where: eq(attendance.id, id),
+      with: {
+        enrollment: {
+          columns: {
+            studentId: true,
+            courseId: true,
+          },
+        },
+      },
+    });
+
+    const result = await db.delete(attendance)
+      .where(eq(attendance.id, id))
+      .returning();
+
+    if (attendanceRecord?.enrollment) {
+      revalidatePath(`/students/${attendanceRecord.enrollment.studentId}`);
+      revalidatePath(`/courses/${attendanceRecord.enrollment.courseId}`);
+      revalidatePath('/attendance');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error deleting attendance:', error);
+    throw new Error('Failed to delete attendance');
+  }
+}
+
+// Marks Functions
+export async function getMarks() {
+  try {
+    return await db.query.marks.findMany({
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+            course: true,
+          },
+        },
+      },
+      orderBy: (marks, { desc }) => [desc(marks.createdAt)],
+    });
+  } catch (error) {
+    console.error('Error fetching marks:', error);
+    throw new Error('Failed to fetch marks');
+  }
+}
+
+export async function getMarkById(id: number) {
+  try {
+    return await db.query.marks.findFirst({
+      where: eq(marks.id, id),
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+            course: true,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching mark:', error);
+    throw new Error('Failed to fetch mark');
+  }
+}
+
+export async function getMarksByStudentId(studentId: number) {
+  try {
+    const studentEnrollments = await db.query.enrollments.findMany({
+      where: eq(enrollments.studentId, studentId),
+      with: {
+        course: true,
+      },
+    });
+
+    const enrollmentIds = studentEnrollments.map(enrollment => enrollment.id);
+
+    if (enrollmentIds.length === 0) {
+      return [];
+    }
+
+    return await db.query.marks.findMany({
+      where: inArray(marks.enrollmentId, enrollmentIds),
+      with: {
+        enrollment: {
+          with: {
+            course: true,
+          },
+        },
+      },
+      orderBy: (marks, { desc }) => [desc(marks.createdAt)],
+    });
+  } catch (error) {
+    console.error('Error fetching student marks:', error);
+    throw new Error('Failed to fetch student marks');
+  }
+}
+
+export async function getMarksByCourseId(courseId: number) {
+  try {
+    const courseEnrollments = await db.query.enrollments.findMany({
+      where: eq(enrollments.courseId, courseId),
+      with: {
+        student: true,
+      },
+    });
+
+    const enrollmentIds = courseEnrollments.map(enrollment => enrollment.id);
+
+    if (enrollmentIds.length === 0) {
+      return [];
+    }
+
+    return await db.query.marks.findMany({
+      where: inArray(marks.enrollmentId, enrollmentIds),
+      with: {
+        enrollment: {
+          with: {
+            student: true,
+          },
+        },
+      },
+      orderBy: (marks, { desc }) => [desc(marks.createdAt)],
+    });
+  } catch (error) {
+    console.error('Error fetching course marks:', error);
+    throw new Error('Failed to fetch course marks');
+  }
+}
+
+export async function addMarks(data: any) {
+  try {
+    const marksData: any = {
+      enrollmentId: data.enrollmentId,
+      examType: data.examType,
+      score: data.score.toString(), // Convert to string for numeric type
+      maxScore: data.maxScore.toString(), // Convert to string for numeric type
+      remarks: data.remarks,
+    };
+
+    const result = await db.insert(marks).values(marksData).returning();
+
+    const enrollment = await db.query.enrollments.findFirst({
+      where: eq(enrollments.id, data.enrollmentId),
+      columns: {
+        studentId: true,
+        courseId: true,
+      },
+    });
+
+    if (enrollment) {
+      revalidatePath(`/students/${enrollment.studentId}`);
+      revalidatePath(`/courses/${enrollment.courseId}`);
+      revalidatePath('/marks');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error adding marks:', error);
+    throw new Error('Failed to add marks');
+  }
+}
+
+export async function updateMarks(id: number, data: any) {
+  try {
+    const updateData: any = {};
+
+    if (data.examType !== undefined) updateData.examType = data.examType;
+    if (data.score !== undefined) updateData.score = data.score.toString();
+    if (data.maxScore !== undefined) updateData.maxScore = data.maxScore.toString();
+    if (data.remarks !== undefined) updateData.remarks = data.remarks;
+
+    updateData.updatedAt = new Date().toISOString();
+
+    const result = await db.update(marks)
+      .set(updateData)
+      .where(eq(marks.id, id))
+      .returning();
+
+    const mark = await db.query.marks.findFirst({
+      where: eq(marks.id, id),
+      with: {
+        enrollment: {
+          columns: {
+            studentId: true,
+            courseId: true,
+          },
+        },
+      },
+    });
+
+    if (mark?.enrollment) {
+      revalidatePath(`/students/${mark.enrollment.studentId}`);
+      revalidatePath(`/courses/${mark.enrollment.courseId}`);
+      revalidatePath('/marks');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error updating marks:', error);
+    throw new Error('Failed to update marks');
+  }
+}
+
+export async function deleteMarks(id: number) {
+  try {
+    const mark = await db.query.marks.findFirst({
+      where: eq(marks.id, id),
+      with: {
+        enrollment: {
+          columns: {
+            studentId: true,
+            courseId: true,
+          },
+        },
+      },
+    });
+
+    const result = await db.delete(marks)
+      .where(eq(marks.id, id))
+      .returning();
+
+    if (mark?.enrollment) {
+      revalidatePath(`/students/${mark.enrollment.studentId}`);
+      revalidatePath(`/courses/${mark.enrollment.courseId}`);
+      revalidatePath('/marks');
+    }
+
+    return result[0];
+  } catch (error) {
+    console.error('Error deleting marks:', error);
+    throw new Error('Failed to delete marks');
+  }
+}
+
+// Helper function to get enrollments
+export async function getEnrollments() {
+  try {
+    return await db.query.enrollments.findMany({
+      with: {
+        student: true,
+        course: true,
+      },
+      orderBy: (enrollments, { desc }) => [desc(enrollments.createdAt)],
+    });
+  } catch (error) {
+    console.error('Error fetching enrollments:', error);
+    throw new Error('Failed to fetch enrollments');
+  }
+}
+
+// Helper function for date formatting - already defined at the top of file
