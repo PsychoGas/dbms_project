@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { addMarks, getEnrollments } from '@/lib/actions';
 import { Button } from '@/components/ui/button';
@@ -50,7 +50,7 @@ const formSchema = z.object({
   remarks: z.string().optional(),
 });
 
-export default function AddMarksPage() {
+export function AddMarksPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const enrollmentIdParam = searchParams.get('enrollmentId');
@@ -243,4 +243,12 @@ export default function AddMarksPage() {
       </Card>
     </div>
   );
+}
+
+export default function MainPage() {
+    return (
+        <Suspense>
+            <AddMarksPage />
+        </Suspense>
+    )
 }
